@@ -10,12 +10,14 @@ __pycache__/
 node_modules/
 build/
 
-# Data / models / logs
+# Data / models
 data/
 models/
 *.pkl
 *.csv
-*.txt
+
+# Logs
+backend_logs.txt
 
 # VS Code
 .vscode/
