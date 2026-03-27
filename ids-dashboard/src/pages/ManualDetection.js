@@ -18,7 +18,7 @@ function ManualDetection() {
     const loadFeatures = async () => {
       try {
         const response = await axios.get(`${API_BASE}/features`);
-        setFeatures(res.data.features);
+        setFeatures(response.data.features || []);
       } catch (err) {
         console.error(err);
       }
@@ -27,28 +27,28 @@ function ManualDetection() {
     if (features.length === 0) {
       loadFeatures();
     }
-  }, [features, setFeatures]);
+  }, [features.length, setFeatures]);
 
   const handleChange = (feature, value) => {
-    setFormData({
-      ...formData,
+    setFormData((prev) => ({
+      ...prev,
       [feature]: value
-    });
+    }));
   };
 
   const detectAttack = async () => {
     try {
       const response = await axios.post(`${API_BASE}/predict`, formData);
 
-      setResult(res.data.prediction);
-      setConfidence(res.data.confidence);
-      setSeverity(res.data.severity);
-      setAttackType(res.data.attack_type);
-      setExplanation(res.data.explanation || []);
+      setResult(response.data.prediction || "");
+      setConfidence(response.data.confidence || "");
+      setSeverity(response.data.severity || "");
+      setAttackType(response.data.attack_type || "");
+      setExplanation(response.data.explanation || []);
 
-      if (res.data.prediction === "Attack Detected") {
+      if (response.data.prediction === "Attack Detected") {
         setStats((prev) => ({ ...prev, attack: prev.attack + 1 }));
-      } else {
+      } else if (response.data.prediction === "Normal Traffic") {
         setStats((prev) => ({ ...prev, normal: prev.normal + 1 }));
       }
     } catch (err) {
@@ -62,17 +62,27 @@ function ManualDetection() {
   };
 
   const getSeverityClasses = () => {
-    if (severity === "Low") return "bg-yellow-400/20 text-yellow-300 border border-yellow-400/30";
-    if (severity === "Medium") return "bg-orange-500/20 text-orange-300 border border-orange-400/30";
-    if (severity === "High") return "bg-red-500/20 text-red-300 border border-red-400/30";
-    if (severity === "Critical") return "bg-red-700/20 text-red-200 border border-red-600/30";
+    if (severity === "Low") {
+      return "bg-yellow-400/20 text-yellow-300 border border-yellow-400/30";
+    }
+    if (severity === "Medium") {
+      return "bg-orange-500/20 text-orange-300 border border-orange-400/30";
+    }
+    if (severity === "High") {
+      return "bg-red-500/20 text-red-300 border border-red-400/30";
+    }
+    if (severity === "Critical") {
+      return "bg-red-700/20 text-red-200 border border-red-600/30";
+    }
     return "bg-green-500/20 text-green-300 border border-green-400/30";
   };
 
   return (
     <div className="space-y-6">
       <CyberCard>
-        <h2 className="text-xl font-semibold mb-4 text-purple-400">Feature Inputs</h2>
+        <h2 className="text-xl font-semibold mb-4 text-purple-400">
+          Feature Inputs
+        </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[420px] overflow-y-auto pr-2 cyber-scroll">
           {features.map((feature, index) => (
@@ -101,22 +111,37 @@ function ManualDetection() {
         <CyberCard>
           <h2 className="text-2xl font-semibold">
             Result:{" "}
-            <span className={result === "Attack Detected" ? "text-red-400" : "text-green-400"}>
+            <span
+              className={
+                result === "Attack Detected"
+                  ? "text-red-400"
+                  : "text-green-400"
+              }
+            >
               {result}
             </span>
           </h2>
 
           <p className="text-lg mt-4">
-            Confidence: <span className="font-semibold text-yellow-400">{confidence}%</span>
+            Confidence:{" "}
+            <span className="font-semibold text-yellow-400">
+              {confidence}%
+            </span>
           </p>
 
           <div className="mt-4">
-            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${getSeverityClasses()}`}>
-              {severity} Severity
+            <span
+              className={`px-3 py-1 rounded-full text-sm font-semibold ${getSeverityClasses()}`}
+            >
+              {severity || "Normal"} Severity
             </span>
           </div>
 
-          <p className={`text-lg font-semibold mt-4 ${attackType === "BENIGN" ? "text-green-400" : "text-yellow-400"}`}>
+          <p
+            className={`text-lg font-semibold mt-4 ${
+              attackType === "BENIGN" ? "text-green-400" : "text-yellow-400"
+            }`}
+          >
             Attack Type: {attackType || "N/A"}
           </p>
 
@@ -129,8 +154,12 @@ function ManualDetection() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {explanation.map((item, index) => (
                   <div key={index} className="cyber-card p-4">
-                    <p className="font-semibold text-yellow-400">{item.feature}</p>
-                    <p className="text-slate-300 mt-1">Importance: {item.importance}</p>
+                    <p className="font-semibold text-yellow-400">
+                      {item.feature}
+                    </p>
+                    <p className="text-slate-300 mt-1">
+                      Importance: {item.importance}
+                    </p>
                   </div>
                 ))}
               </div>
