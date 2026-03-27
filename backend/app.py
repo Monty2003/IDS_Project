@@ -16,7 +16,8 @@ import io
 import secrets
 from datetime import datetime
 from functools import wraps
-import threading
+import eventlet
+eventlet.monkey_patch()
 
 # =========================
 # LOAD ENV
@@ -39,10 +40,7 @@ CORS(
     }
 )
 
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*"
-)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 limiter = Limiter(
     key_func=get_remote_address,
@@ -89,9 +87,6 @@ ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 
 active_tokens = set()
-
-# live stream client tracker
-streaming_clients = {}
 
 
 def write_log(message: str):
@@ -385,6 +380,7 @@ def predict():
         severity = get_severity(prediction, confidence)
         explanation = get_explanation()
 
+        # Save manual detection to MongoDB
         detection_record = {
             "source": "manual",
             "input_data": data,
@@ -460,6 +456,7 @@ def predict_csv():
         attack_type_counts = {}
 
         results = []
+        csv_detection_documents = []
 
         for i in range(len(df_input)):
             pred = predictions[i]
@@ -489,6 +486,17 @@ def predict_csv():
             }
             results.append(row_result)
 
+            csv_detection_documents.append({
+                "source": "csv",
+                "filename": original_filename,
+                "row": i + 1,
+                "prediction": result_label,
+                "attack_type": attack_type,
+                "confidence": round(conf, 2),
+                "severity": severity,
+                "timestamp": datetime.utcnow()
+            })
+
         total_rows = len(df_input)
         attack_rate = round((attack_count / total_rows) * 100, 2) if total_rows > 0 else 0
         normal_rate = round((normal_count / total_rows) * 100, 2) if total_rows > 0 else 0
@@ -512,6 +520,7 @@ def predict_csv():
             for k, v in sorted(attack_type_counts.items(), key=lambda x: x[1], reverse=True)
         ]
 
+        # Save CSV summary to MongoDB
         csv_report_record = {
             "source": "csv_summary",
             "filename": original_filename,
@@ -690,103 +699,55 @@ def generate_random_traffic():
     return data
 
 
-def stream_predictions_for_client(sid):
-    write_log(f"Streaming thread started for {sid}")
+@socketio.on("start_stream")
+def stream_data():
+    print("Client connected for live monitoring")
+    write_log("WebSocket start_stream connected")
 
-    while streaming_clients.get(sid, False):
-        try:
-            data = generate_random_traffic()
+    while True:
+        data = generate_random_traffic()
 
-            input_data = []
-            for feature in feature_columns:
-                input_data.append(float(data.get(feature, 0)))
+        input_data = []
+        for feature in feature_columns:
+            input_data.append(float(data.get(feature, 0)))
 
-            input_array = np.array(input_data).reshape(1, -1)
+        input_array = np.array(input_data).reshape(1, -1)
 
-            prediction = model.predict(input_array)[0]
-            probabilities = model.predict_proba(input_array)[0]
-            confidence = float(max(probabilities) * 100)
+        prediction = model.predict(input_array)[0]
+        probabilities = model.predict_proba(input_array)[0]
+        confidence = float(max(probabilities) * 100)
 
-            if prediction == "BENIGN":
-                result = "Normal Traffic"
-                attack_type = "BENIGN"
-            else:
-                result = "Attack Detected"
-                attack_type = prediction
+        if prediction == "BENIGN":
+            result = "Normal Traffic"
+            attack_type = "BENIGN"
+        else:
+            result = "Attack Detected"
+            attack_type = prediction
 
-            severity = get_severity(prediction, confidence)
+        severity = get_severity(prediction, confidence)
 
-            live_record = {
-                "source": "live_monitoring",
-                "input_data": data,
-                "prediction": result,
-                "attack_type": attack_type,
-                "confidence": round(confidence, 2),
-                "severity": severity,
-                "timestamp": datetime.utcnow()
-            }
-            live_logs_collection.insert_one(live_record)
+        # Save live log to MongoDB
+        live_record = {
+            "source": "live_monitoring",
+            "input_data": data,
+            "prediction": result,
+            "attack_type": attack_type,
+            "confidence": round(confidence, 2),
+            "severity": severity,
+            "timestamp": datetime.utcnow()
+        }
+        live_logs_collection.insert_one(live_record)
 
-            socketio.emit(
-                "live_prediction",
-                {
-                    "prediction": result,
-                    "attack_type": attack_type,
-                    "confidence": round(confidence, 2),
-                    "severity": severity,
-                    "timestamp": time.strftime("%H:%M:%S")
-                },
-                room=sid
-            )
-
-        except Exception as e:
-            write_log(f"live stream error for {sid}: {str(e)}")
-            break
+        emit("live_prediction", {
+            "prediction": result,
+            "attack_type": attack_type,
+            "confidence": round(confidence, 2),
+            "severity": severity,
+            "timestamp": time.strftime("%H:%M:%S")
+        })
 
         socketio.sleep(3)
 
-    streaming_clients[sid] = False
-    write_log(f"Streaming thread stopped for {sid}")
-
-
-@socketio.on("connect")
-def handle_connect():
-    sid = request.sid
-    write_log(f"WebSocket client connected: {sid}")
-    print(f"WebSocket client connected: {sid}")
-
-
-@socketio.on("disconnect")
-def handle_disconnect():
-    sid = request.sid
-    streaming_clients[sid] = False
-    write_log(f"WebSocket client disconnected: {sid}")
-    print(f"WebSocket client disconnected: {sid}")
-
-
-@socketio.on("start_stream")
-def handle_start_stream():
-    sid = request.sid
-
-    if streaming_clients.get(sid, False):
-        write_log(f"start_stream ignored, already running for {sid}")
-        return
-
-    streaming_clients[sid] = True
-    write_log(f"WebSocket start_stream for {sid}")
-    print(f"WebSocket start_stream for {sid}")
-
-    socketio.start_background_task(stream_predictions_for_client, sid)
-
-
-@socketio.on("stop_stream")
-def handle_stop_stream():
-    sid = request.sid
-    streaming_clients[sid] = False
-    write_log(f"WebSocket stop_stream for {sid}")
-    print(f"WebSocket stop_stream for {sid}")
-
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=True)
+    socketio.run(app, debug=True)
