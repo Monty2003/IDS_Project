@@ -8,7 +8,13 @@ export function IDSProvider({ children }) {
   const [formData, setFormData] = useState({});
   const [result, setResult] = useState("");
   const [confidence, setConfidence] = useState("");
+
+  // Current dashboard session history only
   const [history, setHistory] = useState([]);
+
+  // Database history separately
+  const [dbHistory, setDbHistory] = useState([]);
+
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [showAdvancedInputs, setShowAdvancedInputs] = useState(false);
 
@@ -100,7 +106,8 @@ export function IDSProvider({ children }) {
         ? data.map(normalizeHistoryRecord)
         : [];
 
-      setHistory(normalized);
+      // Store only in dbHistory, not in live session history
+      setDbHistory(normalized);
     } catch (error) {
       console.error("History fetch error:", error);
       setHistoryError(error.message || "Failed to load history");
@@ -113,6 +120,7 @@ export function IDSProvider({ children }) {
     fetchHistoryFromDB();
   }, [fetchHistoryFromDB]);
 
+  // Stats should be based only on current live/session history
   useEffect(() => {
     const normalCount = history.filter(
       (item) => item.prediction === "Normal Traffic"
@@ -170,6 +178,8 @@ export function IDSProvider({ children }) {
         setConfidence,
         history,
         setHistory,
+        dbHistory,
+        setDbHistory,
         isMonitoring,
         setIsMonitoring,
         showAdvancedInputs,
