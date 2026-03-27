@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, request, jsonify, send_file, g
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -16,8 +19,6 @@ import io
 import secrets
 from datetime import datetime
 from functools import wraps
-import eventlet
-eventlet.monkey_patch()
 
 # =========================
 # LOAD ENV
@@ -25,12 +26,12 @@ eventlet.monkey_patch()
 load_dotenv()
 
 app = Flask(__name__)
-
-# =========================
-# APP CONFIG
-# =========================
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "ids-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
+# =========================
+# CORS + SOCKETIO
+# =========================
 CORS(
     app,
     resources={
@@ -40,8 +41,15 @@ CORS(
     }
 )
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="eventlet"
+)
 
+# =========================
+# RATE LIMITER
+# =========================
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per hour"],
@@ -51,8 +59,15 @@ limiter = Limiter(
 # =========================
 # MODEL LOAD
 # =========================
-model = joblib.load("../models/ids_model.pkl")
-feature_columns = joblib.load("../models/feature_columns.pkl")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "models"))
+LOG_FILE = os.path.abspath(os.path.join(BASE_DIR, "..", "backend_logs.txt"))
+
+model_path = os.path.join(MODELS_DIR, "ids_model.pkl")
+feature_columns_path = os.path.join(MODELS_DIR, "feature_columns.pkl")
+
+model = joblib.load(model_path)
+feature_columns = joblib.load(feature_columns_path)
 
 print("Multiclass model loaded successfully")
 
@@ -78,7 +93,6 @@ except Exception as e:
     print(f"MongoDB Atlas connection failed: {e}")
 
 latest_csv_result = None
-LOG_FILE = "../backend_logs.txt"
 
 # =========================
 # SIMPLE AUTH CONFIG
@@ -87,12 +101,19 @@ ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 
 active_tokens = set()
+client_stream_status = {}
 
 
+# =========================
+# HELPER FUNCTIONS
+# =========================
 def write_log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception as e:
+        print(f"Log write failed: {e}")
 
 
 def get_severity(prediction, confidence):
@@ -112,7 +133,7 @@ def get_explanation():
         importance = model.feature_importances_
         pairs = list(zip(feature_columns, importance))
         top_features = sorted(pairs, key=lambda x: x[1], reverse=True)[:5]
-        return [{"feature": f, "importance": round(i, 4)} for f, i in top_features]
+        return [{"feature": f, "importance": round(float(i), 4)} for f, i in top_features]
     except Exception:
         return []
 
@@ -152,9 +173,6 @@ def prepare_csv_input(df):
     return df_input, matched_count, missing_features, overlap_ratio
 
 
-# =========================
-# AUTH HELPERS
-# =========================
 def get_bearer_token():
     auth_header = request.headers.get("Authorization", "")
 
@@ -174,6 +192,67 @@ def require_auth(func):
 
         return func(*args, **kwargs)
     return wrapper
+
+
+def validate_json_payload(data):
+    if data is None:
+        return "No JSON body received"
+
+    if not isinstance(data, dict):
+        return "Invalid JSON format"
+
+    return None
+
+
+def build_model_input_from_json(data):
+    input_data = []
+
+    for feature in feature_columns:
+        value = data.get(feature, 0)
+
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid numeric value for feature: {feature}")
+
+        input_data.append(value)
+
+    return np.array(input_data).reshape(1, -1)
+
+
+def validate_uploaded_csv():
+    if "file" not in request.files:
+        return None, ("No file uploaded", 400)
+
+    file = request.files["file"]
+
+    if file.filename == "":
+        return None, ("No selected file", 400)
+
+    if not file.filename.lower().endswith(".csv"):
+        return None, ("Only CSV files are allowed", 400)
+
+    return file, None
+
+
+def generate_random_traffic():
+    data = {}
+
+    for feature in feature_columns:
+        name = feature.lower()
+
+        if "bytes" in name:
+            data[feature] = random.uniform(100, 50000)
+        elif "packets" in name:
+            data[feature] = random.uniform(1, 2000)
+        elif "duration" in name:
+            data[feature] = random.uniform(1, 5000)
+        elif "rate" in name:
+            data[feature] = random.uniform(0, 1000)
+        else:
+            data[feature] = random.uniform(0, 100)
+
+    return data
 
 
 # =========================
@@ -309,50 +388,6 @@ def auth_status():
 
 
 # =========================
-# VALIDATION HELPERS
-# =========================
-def validate_json_payload(data):
-    if data is None:
-        return "No JSON body received"
-
-    if not isinstance(data, dict):
-        return "Invalid JSON format"
-
-    return None
-
-
-def build_model_input_from_json(data):
-    input_data = []
-
-    for feature in feature_columns:
-        value = data.get(feature, 0)
-
-        try:
-            value = float(value)
-        except (ValueError, TypeError):
-            raise ValueError(f"Invalid numeric value for feature: {feature}")
-
-        input_data.append(value)
-
-    return np.array(input_data).reshape(1, -1)
-
-
-def validate_uploaded_csv():
-    if "file" not in request.files:
-        return None, ("No file uploaded", 400)
-
-    file = request.files["file"]
-
-    if file.filename == "":
-        return None, ("No selected file", 400)
-
-    if not file.filename.lower().endswith(".csv"):
-        return None, ("Only CSV files are allowed", 400)
-
-    return file, None
-
-
-# =========================
 # SINGLE PREDICTION
 # =========================
 @app.route("/predict", methods=["POST"])
@@ -380,7 +415,6 @@ def predict():
         severity = get_severity(prediction, confidence)
         explanation = get_explanation()
 
-        # Save manual detection to MongoDB
         detection_record = {
             "source": "manual",
             "input_data": data,
@@ -456,7 +490,6 @@ def predict_csv():
         attack_type_counts = {}
 
         results = []
-        csv_detection_documents = []
 
         for i in range(len(df_input)):
             pred = predictions[i]
@@ -486,17 +519,6 @@ def predict_csv():
             }
             results.append(row_result)
 
-            csv_detection_documents.append({
-                "source": "csv",
-                "filename": original_filename,
-                "row": i + 1,
-                "prediction": result_label,
-                "attack_type": attack_type,
-                "confidence": round(conf, 2),
-                "severity": severity,
-                "timestamp": datetime.utcnow()
-            })
-
         total_rows = len(df_input)
         attack_rate = round((attack_count / total_rows) * 100, 2) if total_rows > 0 else 0
         normal_rate = round((normal_count / total_rows) * 100, 2) if total_rows > 0 else 0
@@ -520,7 +542,6 @@ def predict_csv():
             for k, v in sorted(attack_type_counts.items(), key=lambda x: x[1], reverse=True)
         ]
 
-        # Save CSV summary to MongoDB
         csv_report_record = {
             "source": "csv_summary",
             "filename": original_filename,
@@ -677,77 +698,103 @@ def get_live_history():
 
 
 # =========================
-# WEBSOCKET REAL-TIME MONITORING
+# WEBSOCKET EVENTS
 # =========================
-def generate_random_traffic():
-    data = {}
+@socketio.on("connect")
+def handle_connect():
+    write_log("WebSocket client connected")
+    print("WebSocket client connected")
 
-    for feature in feature_columns:
-        name = feature.lower()
 
-        if "bytes" in name:
-            data[feature] = random.uniform(100, 50000)
-        elif "packets" in name:
-            data[feature] = random.uniform(1, 2000)
-        elif "duration" in name:
-            data[feature] = random.uniform(1, 5000)
-        elif "rate" in name:
-            data[feature] = random.uniform(0, 1000)
-        else:
-            data[feature] = random.uniform(0, 100)
+@socketio.on("disconnect")
+def handle_disconnect():
+    sid = request.sid
+    client_stream_status[sid] = False
+    write_log(f"WebSocket client disconnected sid={sid}")
+    print(f"WebSocket client disconnected sid={sid}")
 
-    return data
+
+def live_stream_task(sid):
+    write_log(f"Live stream started sid={sid}")
+
+    while client_stream_status.get(sid, False):
+        try:
+            data = generate_random_traffic()
+
+            input_data = []
+            for feature in feature_columns:
+                input_data.append(float(data.get(feature, 0)))
+
+            input_array = np.array(input_data).reshape(1, -1)
+
+            prediction = model.predict(input_array)[0]
+            probabilities = model.predict_proba(input_array)[0]
+            confidence = float(max(probabilities) * 100)
+
+            if prediction == "BENIGN":
+                result = "Normal Traffic"
+                attack_type = "BENIGN"
+            else:
+                result = "Attack Detected"
+                attack_type = prediction
+
+            severity = get_severity(prediction, confidence)
+
+            live_record = {
+                "source": "live_monitoring",
+                "input_data": data,
+                "prediction": result,
+                "attack_type": attack_type,
+                "confidence": round(confidence, 2),
+                "severity": severity,
+                "timestamp": datetime.utcnow()
+            }
+            live_logs_collection.insert_one(live_record)
+
+            socketio.emit("live_prediction", {
+                "prediction": result,
+                "attack_type": attack_type,
+                "confidence": round(confidence, 2),
+                "severity": severity,
+                "timestamp": time.strftime("%H:%M:%S")
+            }, room=sid)
+
+            socketio.sleep(3)
+
+        except Exception as e:
+            write_log(f"Live stream error sid={sid}: {str(e)}")
+            socketio.emit("live_prediction_error", {"error": str(e)}, room=sid)
+            socketio.sleep(3)
+
+    write_log(f"Live stream stopped sid={sid}")
 
 
 @socketio.on("start_stream")
-def stream_data():
-    print("Client connected for live monitoring")
-    write_log("WebSocket start_stream connected")
+def start_stream():
+    sid = request.sid
 
-    while True:
-        data = generate_random_traffic()
+    if client_stream_status.get(sid, False):
+        emit("stream_status", {"message": "Stream already running"})
+        return
 
-        input_data = []
-        for feature in feature_columns:
-            input_data.append(float(data.get(feature, 0)))
+    client_stream_status[sid] = True
+    socketio.start_background_task(live_stream_task, sid)
 
-        input_array = np.array(input_data).reshape(1, -1)
-
-        prediction = model.predict(input_array)[0]
-        probabilities = model.predict_proba(input_array)[0]
-        confidence = float(max(probabilities) * 100)
-
-        if prediction == "BENIGN":
-            result = "Normal Traffic"
-            attack_type = "BENIGN"
-        else:
-            result = "Attack Detected"
-            attack_type = prediction
-
-        severity = get_severity(prediction, confidence)
-
-        # Save live log to MongoDB
-        live_record = {
-            "source": "live_monitoring",
-            "input_data": data,
-            "prediction": result,
-            "attack_type": attack_type,
-            "confidence": round(confidence, 2),
-            "severity": severity,
-            "timestamp": datetime.utcnow()
-        }
-        live_logs_collection.insert_one(live_record)
-
-        emit("live_prediction", {
-            "prediction": result,
-            "attack_type": attack_type,
-            "confidence": round(confidence, 2),
-            "severity": severity,
-            "timestamp": time.strftime("%H:%M:%S")
-        })
-
-        socketio.sleep(3)
+    emit("stream_status", {"message": "Live monitoring started"})
+    write_log(f"start_stream received sid={sid}")
 
 
+@socketio.on("stop_stream")
+def stop_stream():
+    sid = request.sid
+    client_stream_status[sid] = False
+    emit("stream_status", {"message": "Live monitoring stopped"})
+    write_log(f"stop_stream received sid={sid}")
+
+
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
-    socketio.run(app, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port, debug=False)
