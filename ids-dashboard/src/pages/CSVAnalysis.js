@@ -8,6 +8,7 @@ import {
 import axios from "axios";
 import { useIDS } from "../context/IDSContext";
 import CyberCard from "../components/CyberCard";
+import API_BASE from "../config";
 import { useState, useEffect, useRef } from "react";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
@@ -69,7 +70,7 @@ function CSVAnalysis() {
 
     try {
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict-csv",
+        `${API_BASE}/predict-csv`,
         uploadData,
         {
           headers: {
@@ -122,7 +123,7 @@ function CSVAnalysis() {
   };
 
   const exportBatchResultsCSV = () => {
-    window.open("http://127.0.0.1:5000/download-csv", "_blank");
+    window.open(`${API_BASE}/download-csv`, "_blank");
   };
 
   const getBatchRiskColor = () => {

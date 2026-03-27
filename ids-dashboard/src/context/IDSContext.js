@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import API_BASE from "../config";
 
 const IDSContext = createContext();
 
@@ -88,7 +89,7 @@ export function IDSProvider({ children }) {
       setHistoryLoading(true);
       setHistoryError("");
 
-      const response = await fetch("http://127.0.0.1:5000/history");
+      const response = await fetch(`${API_BASE}/history`);
       const data = await response.json();
 
       if (!response.ok) {

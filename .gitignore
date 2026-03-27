@@ -10,10 +10,8 @@ __pycache__/
 node_modules/
 build/
 
-# Data / models
+# Data
 data/
-models/
-*.pkl
 *.csv
 
 # Logs

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
+import API_BASE from "../config";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -47,7 +48,7 @@ function LiveMonitoring() {
   useEffect(() => {
     const loadFeatures = async () => {
       try {
-        const response = await axios.get("http://127.0.0.1:5000/features");
+        const response = await axios.get(`${API_BASE}/features`);
         setFeatures(response.data.features);
       } catch (error) {
         console.error(error);
@@ -96,7 +97,7 @@ function LiveMonitoring() {
     setIsMonitoring(true);
     showAlert("info", "Monitoring Started", "Real-time monitoring active");
 
-    socketRef.current = io("http://127.0.0.1:5000");
+    socketRef.current = io(`${API_BASE}`);
 
     socketRef.current.emit("start_stream");
 

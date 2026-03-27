@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import API_BASE from "../config";
 import { useIDS } from "../context/IDSContext";
 
 function SystemStatus() {
@@ -11,7 +12,7 @@ function SystemStatus() {
 
     const checkBackend = async () => {
       try {
-        await axios.get("http://127.0.0.1:5000/");
+        await axios.get(API_BASE);
         if (mounted) {
           setBackendStatus("Backend Connected");
         }

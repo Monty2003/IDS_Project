@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import API_BASE from "../config";
 import axios from "axios";
 import { Pie, Line } from "react-chartjs-2";
 import {
@@ -56,7 +57,7 @@ function Dashboard() {
   useEffect(() => {
     const loadFeatures = async () => {
       try {
-        const response = await axios.get("http://127.0.0.1:5000/features");
+        const response = await axios.get(`${API_BASE}/features`);
         setFeatures(response.data.features);
       } catch (error) {
         console.error(error);
@@ -151,7 +152,7 @@ function Dashboard() {
   const detectAttack = async () => {
     try {
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict",
+        `${API_BASE}/predict`,
         formData
       );
 
@@ -212,7 +213,7 @@ function Dashboard() {
       const normalData = buildNormalTraffic();
 
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict",
+        `${API_BASE}/predict`,
         normalData
       );
 
@@ -229,7 +230,7 @@ function Dashboard() {
       const suspiciousData = buildSuspiciousTraffic();
 
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict",
+        `${API_BASE}/predict`,
         suspiciousData
       );
 
@@ -249,7 +250,7 @@ function Dashboard() {
         : buildNormalTraffic();
 
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict",
+        `${API_BASE}/predict`,
         trafficData
       );
 
@@ -333,7 +334,7 @@ function Dashboard() {
 
     try {
       const response = await axios.post(
-        "http://127.0.0.1:5000/predict-csv",
+        "`${API_BASE}/predict-csv`,
         uploadData,
         {
           headers: {
@@ -401,7 +402,7 @@ function Dashboard() {
   };
 
   const exportBatchResultsCSV = () => {
-    window.open("http://127.0.0.1:5000/download-csv", "_blank");
+    window.open(`${API_BASE}/download-csv`, "_blank");
     showAlert(
       "success",
       "Download Started",

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useIDS } from "../context/IDSContext";
 import CyberCard from "../components/CyberCard";
+import API_BASE from "../config";
 
 function ManualDetection() {
   const { features, setFeatures, setStats } = useIDS();
@@ -16,7 +17,7 @@ function ManualDetection() {
   useEffect(() => {
     const loadFeatures = async () => {
       try {
-        const res = await axios.get("http://127.0.0.1:5000/features");
+        const response = await axios.get(`${API_BASE}/features`);
         setFeatures(res.data.features);
       } catch (err) {
         console.error(err);
@@ -37,7 +38,7 @@ function ManualDetection() {
 
   const detectAttack = async () => {
     try {
-      const res = await axios.post("http://127.0.0.1:5000/predict", formData);
+      const response = await axios.post(`${API_BASE}/predict`, formData);
 
       setResult(res.data.prediction);
       setConfidence(res.data.confidence);
